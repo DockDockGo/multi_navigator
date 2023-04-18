@@ -45,13 +45,20 @@ class MultiNavigator(Node):
         self.feedback = None
         self.status = {}
         self.namespaces = namespaces
-
+        self.time_taken = []
         self.nav_to_pose_clients = {}
         self.ENVIRONMENT = os.environ.get("MAP_NAME", "svd_demo")
 
         for namespace in namespaces:
             self.nav_to_pose_clients[namespace] = ActionClient(
                 self, NavigateToPose, "/" + namespace + "/navigate_to_pose"
+            )
+
+        self.dt = {}
+        self.compute_path_to_pose_clients = {}
+        for namespace in namespaces:
+            self.compute_path_to_pose_clients[namespace] = ActionClient(
+                self, ComputePathToPose, "/" + namespace + "/compute_path_to_pose"
             )
 
         # self.pose_list = self.init_pose_config_workspace_0()
@@ -81,16 +88,6 @@ class MultiNavigator(Node):
 
         if self.ENVIRONMENT == "svd_demo":
             initial_pose = (12.0, 3.0)
-            # for i in range(0, 6):
-            #     for j in range(0, 3):
-            #         pose_list.append(
-            #             (initial_pose[0] + i * 1.0, initial_pose[1] - 2.0 * j)
-            #         )
-            for i in range(0, 2):
-                for j in range(0, 3):
-                    pose_list.append(
-                        (initial_pose[0] + i * 4.0, initial_pose[1] - 2.0 * j)
-                    )
 
             initial_pose = (8.0, -1.0)
             for i in range(0, 3):
@@ -98,9 +95,12 @@ class MultiNavigator(Node):
                     (initial_pose[0] + i * 1.0, initial_pose[1] - (i % 2) * 1.0)
                 )
 
-            initial_pose = (5.5, 1.5)
-            for i in range(0, 3):
-                pose_list.append((initial_pose[0], initial_pose[1] - i * 1.5))
+            # initial_pose = (5.5, 1.5)
+            pose_list.append((5.5, 1.5))
+            pose_list.append((5.0, -1.0))
+            pose_list.append((6.5, -2.2))
+            # for i in range(1, 3):
+            #     pose_list.append((initial_pose[0] + 0.5, initial_pose[1] - i * 1.5))
 
             pose_list.append((2.75, 1.5))
             pose_list.append((0.0, 1.5))
@@ -134,6 +134,7 @@ class MultiNavigator(Node):
         goal_pose.header.stamp = self.get_clock().now().to_msg()
         goal_pose.pose.position.x = pose[0] * 1.0
         goal_pose.pose.position.y = pose[1] * 1.0
+        goal_pose.pose.position.z = 0.0
         goal_pose.pose.orientation.w = 0.0
 
         return goal_pose
@@ -177,13 +178,137 @@ class MultiNavigator(Node):
             return False
 
         self.result_future[namespace] = self.goal_handle[namespace].get_result_async()
+        return True
+
+    def timer_callback(self):
+        # This function calls goToPose for every namespace
+        past_poses = []
+        for namespace in self.namespaces:
+            pose = self.computeRandomPoses(past_poses, namespace)
+            self.goToPose(pose, namespace)
+
+    def benchmark_callback(self):
+        # This function calls computePathCb for every namespace
+        past_poses = []
+        for namespace in self.namespaces:
+            pose = self.computeRandomPoses(past_poses, namespace)
+            self.dt[namespace] = self.get_clock().now()
+            path = self.computePathCb(pose, namespace)
+            # self.info(path)
+
+    def computePathCb(self, goal_pose, namespace):
+        self.debug("Waiting for 'ComputePathToPose' action server")
+
+        while not self.compute_path_to_pose_clients[namespace].wait_for_server(
+            timeout_sec=1.0
+        ):
+            self.info("'ComputePathToPose' action server not available, waiting...")
+
+        start = PoseStamped()
+        start.header.frame_id = "map"
+        start.header.stamp = self.get_clock().now().to_msg()
+        start.pose.position.x = 0.0
+        start.pose.position.y = 0.0
+        start.pose.position.z = 0.0
+        start.pose.orientation.w = 0.0
+
+        goal_msg = ComputePathToPose.Goal()
+        goal_msg.start = start
+        goal_msg.goal = goal_pose
+        goal_msg.planner_id = "GridBased"
+        goal_msg.use_start = False
+
+        self.info(
+            "Computing path to goal for namespace "
+            + namespace
+            + " : "
+            + str(goal_pose.pose.position.x)
+            + " "
+            + str(goal_pose.pose.position.y)
+            + "..."
+        )
+        send_goal_future = self.compute_path_to_pose_clients[namespace].send_goal_async(
+            goal_msg
+        )
+        rclpy.spin_until_future_complete(self, send_goal_future)
+        self.goal_handle[namespace] = send_goal_future.result()
+        if not self.goal_handle[namespace].accepted:
+            self.error(
+                "Goal to "
+                + str(goal_pose.pose.position.x)
+                + " "
+                + str(goal_pose.pose.position.y)
+                + " was rejected!"
+            )
+            return None
+
+        _result_future = self.goal_handle[namespace].get_result_async()
+        rclpy.spin_until_future_complete(self, _result_future)
+        self.status = _result_future.result().status
+        if self.status != GoalStatus.STATUS_SUCCEEDED:
+            self.warn(f"Getting path failed with status code: {self.status}")
+            return None
+        else:
+            self.time_taken.append(
+                (self.get_clock().now() - self.dt[namespace]).nanoseconds / 1e6
+            )
+            self.info("Path computed for namespace " + str(self.time_taken[-1]))  # ms
+
+        # self.warn("here")
+
+        return _result_future.result().result
+
+        # self.warn("here2")
+        # self.result_future[namespace] = self.goal_handle[namespace].get_result_async()
+        # self.result_future[namespace].add_done_callback(
+        #     lambda future: self._pathCallback(future, namespace)
+        # )
+        # self.warn("here2")
+        # # time.sleep(10)
+        # rclpy.spin_until_future_complete(self, self.result_future[namespace])
+        # self.warn("here3")
+        # self.status[namespace] = self.result_future[namespace].result().status
+        # if self.status[namespace] != GoalStatus.STATUS_SUCCEEDED:
+        #     self.warn(f"Getting path failed with status code: {self.status[namespace]}")
+        #     return None
+        # self.warn("here4")
+        # self.info(
+        #     "Path computed for namespace "
+        #     + str(self.get_clock().now() - self.dt[namespace])
+        # )
+
+        # return self.result_future[namespace].result().result
+
+        # if not self.goal_handle[namespace].accepted:
+        #     self.error(
+        #         "Goal to "
+        #         + str(goal_pose.pose.position.x)
+        #         + " "
+        #         + str(goal_pose.pose.position.y)
+        #         + " was rejected!"
+        #     )
+        #     return False
+
+        # self.result_future[namespace] = self.goal_handle[namespace].get_result_async()
+
+        # self.result_future[namespace].add_done_callback(
+        #     lambda future: self._pathCallback(future, namespace)
+        # )
+
+    # def _pathCallback(self, future, namespace):
+    #     self.info(
+    #         "Path computed for namespace "
+    #         + str(self.dt[namespace] - self.get_clock().now())
+    #     )
 
     def destroyNode(self):
         self.destroy_node()
 
     def destroy_node(self):
         for namespace in self.namespaces:
-            self.nav_to_pose_client[namespace].destroy()
+            self.nav_to_pose_clients[namespace].destroy()
+            self.compute_path_to_pose_clients[namespace].destroy()
+
         # self.follow_waypoints_client.destroy()
         super().destroy_node()
 
@@ -357,7 +482,7 @@ class MultiNavigator(Node):
     #     Internal implementation to get the full result, not just the path.
     #     """
     #     self.debug("Waiting for 'ComputePathToPose' action server")
-    #     while not self.compute_path_to_pose_client.wait_for_server(timeout_sec=1.0):
+    #     while not self.compute_path_to_pose_clients.wait_for_server(timeout_sec=1.0):
     #         self.info("'ComputePathToPose' action server not available, waiting...")
 
     #     goal_msg = ComputePathToPose.Goal()
@@ -367,7 +492,7 @@ class MultiNavigator(Node):
     #     goal_msg.use_start = use_start
 
     #     self.info("Getting path...")
-    #     send_goal_future = self.compute_path_to_pose_client.send_goal_async(goal_msg)
+    #     send_goal_future = self.compute_path_to_pose_clients.send_goal_async(goal_msg)
     #     rclpy.spin_until_future_complete(self, send_goal_future)
     #     self.goal_handle = send_goal_future.result()
 
@@ -673,8 +798,30 @@ def main(args=None):
     try:
         while rclpy.ok():
             multi_navigator.timer_callback()
-            # rclpy.spin_once(multi_navigator)
-            # rate.sleep()
+
+            # multi_navigator.benchmark_callback()
+            # if multi_navigator.time_taken:
+            #     print(
+            #         "Average time taken = "
+            #         + str(
+            #             sum(multi_navigator.time_taken)
+            #             / len(multi_navigator.time_taken)
+            #         )
+            #         + " ms seconds"
+            #     )
+
+            #     print(
+            #         "Rate "
+            #         + str(
+            #             1000.0
+            #             / (
+            #                 sum(multi_navigator.time_taken)
+            #                 / len(multi_navigator.time_taken)
+            #             )
+            #         )
+            #         + "Hz"
+            #     )
+
             time.sleep(30)
     except KeyboardInterrupt:
         pass
