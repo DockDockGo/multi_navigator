@@ -103,7 +103,7 @@ class MultiNavigator(Node):
             #     pose_list.append((initial_pose[0] + 0.5, initial_pose[1] - i * 1.5))
 
             pose_list.append((2.75, 1.5))
-            pose_list.append((0.0, 1.5))
+            pose_list.append((0.0, 1.8))
             pose_list.append((0.0, -2.0))
             pose_list.append((-1.5, 1.5))
             pose_list.append((-3.0, 2.0))
