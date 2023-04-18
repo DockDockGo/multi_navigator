@@ -783,7 +783,11 @@ class MultiNavigator(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    namespaces = ["robot0", "robot1", "robot2"]
+    namespaces = []
+    num_robots = os.environ.get("Number_of_Robots", "2")
+
+    for i in range(int(num_robots)):
+        namespaces.append("robot" + str(i))
 
     multi_navigator = MultiNavigator(namespaces)
 
