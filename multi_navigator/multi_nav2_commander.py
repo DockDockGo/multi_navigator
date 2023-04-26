@@ -71,6 +71,47 @@ class MultiNavigator(Node):
 
         pose_list = []
 
+        if self.ENVIRONMENT == "neo_track1":
+            initial_pose = (5.0, 6.0)
+            for i in range(0, 6):
+                for j in range(0, 8):
+                    pose_list.append(
+                        (initial_pose[0] - j * 2.0, initial_pose[1] - i * 2.0)
+                    )
+
+        if self.ENVIRONMENT == "aws":
+            initial_pose = (12.5, 2.0)
+            for i in range(0, 6):
+                for j in range(0, 3):
+                    pose_list.append(
+                        (initial_pose[0] - i * 2.0, initial_pose[1] - j * 2.0)
+                    )
+
+            pose_list.append((0.0, -3.0))
+            pose_list.append((-3.0, -3.0))
+
+            initial_pose = (12.5, -7.0)
+
+            for i in range(0, 8):
+                pose_list.append((initial_pose[0] - i * 2.0, initial_pose[1]))
+
+        if self.ENVIRONMENT == "neo_workshop":
+            initial_pose = (5.0, 3.0)
+            for j in range(0, 4):
+                pose_list.append((initial_pose[0], initial_pose[1] - 2.0 * j))
+            for j in range(0, 5):
+                pose_list.append((initial_pose[0] - 2.0 * j, initial_pose[1]))
+            for j in range(0, 5):
+                pose_list.append((initial_pose[0] - 2.0 * j, initial_pose[1] - 6.0))
+
+            initial_pose = (-1.5, -6.0)
+
+            for i in range(0, 2):
+                for j in range(0, 2):
+                    pose_list.append(
+                        (initial_pose[0] - 2.5 * i, initial_pose[1] - 2.0 * j)
+                    )
+
         if self.ENVIRONMENT == "workspace_0":
             initial_pose = (-3.0, 1.5)
             for j in range(0, 3):
@@ -119,6 +160,7 @@ class MultiNavigator(Node):
 
     def computeRandomPoses(self, past_poses, namespace):
         self.info("Computing random pose for namespace " + namespace)
+        print("len of pose list = ", len(self.pose_list))
 
         pose = self.pose_list[randint(0, len(self.pose_list) - 1)]
         while pose in past_poses:
