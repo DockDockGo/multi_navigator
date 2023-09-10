@@ -49,16 +49,22 @@ class MultiNavigator(Node):
         self.nav_to_pose_clients = {}
         self.ENVIRONMENT = os.environ.get("MAP_NAME", "svd_demo")
 
-        for namespace in namespaces:
-            self.nav_to_pose_clients[namespace] = ActionClient(
-                self, NavigateToPose, "/" + namespace + "/navigate_to_pose"
-            )
+        # for namespace in namespaces:
+        #     self.nav_to_pose_clients[namespace] = ActionClient(
+        #         self, NavigateToPose, "/" + namespace + "/navigate_to_pose"
+        #     )
 
-        self.dt = {}
-        self.compute_path_to_pose_clients = {}
+        # self.dt = {}
+        # self.compute_path_to_pose_clients = {}
+        # for namespace in namespaces:
+        #     self.compute_path_to_pose_clients[namespace] = ActionClient(
+        #         self, ComputePathToPose, "/" + namespace + "/compute_path_to_pose"
+        #     )
+
+        self.send_goal_publisher = {}
         for namespace in namespaces:
-            self.compute_path_to_pose_clients[namespace] = ActionClient(
-                self, ComputePathToPose, "/" + namespace + "/compute_path_to_pose"
+            self.send_goal_publisher[namespace] = self.create_publisher(
+                PoseStamped, "/" + namespace + "/cbs_path/goal_pose", 10
             )
 
         # self.pose_list = self.init_pose_config_workspace_0()
@@ -68,7 +74,6 @@ class MultiNavigator(Node):
         # self.timer = self.create_timer(timer_period, self.timer_callback)
 
     def init_pose_config(self):
-
         pose_list = []
 
         if self.ENVIRONMENT == "neo_track1":
@@ -128,26 +133,43 @@ class MultiNavigator(Node):
             pose_list.append((-5, -3))
 
         if self.ENVIRONMENT == "svd_demo":
-            initial_pose = (12.0, 3.0)
-
-            initial_pose = (8.0, -1.0)
-            for i in range(0, 3):
-                pose_list.append(
-                    (initial_pose[0] + i * 1.0, initial_pose[1] - (i % 2) * 1.0)
-                )
-
-            # initial_pose = (5.5, 1.5)
-            pose_list.append((5.5, 1.5))
-            pose_list.append((5.0, -1.0))
-            pose_list.append((6.5, -2.2))
-            # for i in range(1, 3):
-            #     pose_list.append((initial_pose[0] + 0.5, initial_pose[1] - i * 1.5))
-
-            pose_list.append((2.75, 1.5))
-            pose_list.append((0.0, 1.8))
-            pose_list.append((0.0, -2.0))
             pose_list.append((-1.5, 1.5))
-            pose_list.append((-3.0, 2.0))
+            pose_list.append((-0.5, 1.5))
+
+            pose_list.append((5.0, 2.0))
+            pose_list.append((5.5, 1.5))
+            pose_list.append((5.0, 1.0))
+            pose_list.append((5.0, 0.0))
+            pose_list.append((5.0, -0.5))
+            pose_list.append((5.0, -1.0))
+            pose_list.append((5.0, -1.5))
+            pose_list.append((5.0, -2.0))
+
+            pose_list.append((0.0, 0.0))
+            pose_list.append((1.0, 0.0))
+            pose_list.append((2.0, 0.0))
+            pose_list.append((3.0, 0.0))
+            pose_list.append((4.0, 0.0))
+
+            pose_list.append((0.0, -1.3))
+            pose_list.append((5.0, -1.3))
+            pose_list.append((6.0, -1.3))
+            pose_list.append((7.0, -1.3))
+            pose_list.append((8.0, -1.3))
+            pose_list.append((9.0, -1.3))
+            pose_list.append((10.0, -1.3))
+
+            pose_list.append((0.0, -2.2))
+            pose_list.append((1.0, -2.2))
+            pose_list.append((2.0, -2.2))
+            pose_list.append((3.0, -2.2))
+            pose_list.append((4.0, -2.2))
+            pose_list.append((5.0, -2.2))
+            pose_list.append((6.0, -2.2))
+            pose_list.append((7.0, -2.2))
+            pose_list.append((8.0, -2.2))
+            pose_list.append((9.0, -2.2))
+            pose_list.append((10.0, -2.2))
 
         return pose_list
 
@@ -185,14 +207,15 @@ class MultiNavigator(Node):
         """Send a `NavToPose` action request."""
         self.debug("Waiting for 'NavigateToPose' action server")
 
-        while not self.nav_to_pose_clients[namespace].wait_for_server(timeout_sec=1.0):
-            self.info("'NavigateToPose' action server not available, waiting...")
+        # while not self.nav_to_pose_clients[namespace].wait_for_server(timeout_sec=1.0):
+        #     self.info("'NavigateToPose' action server not available, waiting...")
 
         # self.cancelTask(namespace)
+        # goal_msg = NavigateToPose.Goal()
+        # goal_msg.pose = pose
+        # goal_msg.behavior_tree = behavior_tree
 
-        goal_msg = NavigateToPose.Goal()
-        goal_msg.pose = pose
-        goal_msg.behavior_tree = behavior_tree
+        pose.header.frame_id = namespace
 
         self.info(
             "Navigating to goal for namespace "
@@ -203,23 +226,26 @@ class MultiNavigator(Node):
             + str(pose.pose.position.y)
             + "..."
         )
-        send_goal_future = self.nav_to_pose_clients[namespace].send_goal_async(
-            goal_msg, self._feedbackCallback
-        )
-        rclpy.spin_until_future_complete(self, send_goal_future)
-        self.goal_handle[namespace] = send_goal_future.result()
 
-        if not self.goal_handle[namespace].accepted:
-            self.error(
-                "Goal to "
-                + str(pose.pose.position.x)
-                + " "
-                + str(pose.pose.position.y)
-                + " was rejected!"
-            )
-            return False
+        self.send_goal_publisher[namespace].publish(pose)
 
-        self.result_future[namespace] = self.goal_handle[namespace].get_result_async()
+        # # send_goal_future = self.nav_to_pose_clients[namespace].send_goal_async(
+        # #     goal_msg, self._feedbackCallback
+        # # )
+        # # rclpy.spin_until_future_complete(self, send_goal_future)
+        # # self.goal_handle[namespace] = send_goal_future.result()
+
+        # # if not self.goal_handle[namespace].accepted:
+        # #     self.error(
+        # #         "Goal to "
+        # #         + str(pose.pose.position.x)
+        # #         + " "
+        # #         + str(pose.pose.position.y)
+        # #         + " was rejected!"
+        # #     )
+        # #     return False
+
+        # self.result_future[namespace] = self.goal_handle[namespace].get_result_async()
         return True
 
     def timer_callback(self):
@@ -868,7 +894,7 @@ def main(args=None):
             #         + "Hz"
             #     )
 
-            time.sleep(30)
+            time.sleep(45)
     except KeyboardInterrupt:
         pass
 
