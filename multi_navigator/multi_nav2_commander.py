@@ -136,19 +136,19 @@ class MultiNavigator(Node):
             pose_list.append((-1.5, 1.5))
             pose_list.append((-0.5, 1.5))
 
-            pose_list.append((5.0, 2.0))
-            pose_list.append((5.5, 1.5))
-            pose_list.append((5.0, 1.0))
-            pose_list.append((5.0, 0.0))
-            pose_list.append((5.0, -0.5))
-            pose_list.append((5.0, -1.0))
-            pose_list.append((5.0, -1.5))
-            pose_list.append((5.0, -2.0))
+            pose_list.append((5.5, 2.0))
+            # pose_list.append((5.5, 1.5))
+            pose_list.append((5.5, 1.0))
+            pose_list.append((5.5, 0.0))
+            # pose_list.append((5.5, -0.5))
+            pose_list.append((5.5, -1.0))
+            # pose_list.append((5.5, -1.0))
+            pose_list.append((5.5, -2.0))
 
             pose_list.append((0.0, 0.0))
             pose_list.append((1.0, 0.0))
             pose_list.append((2.0, 0.0))
-            pose_list.append((3.0, 0.0))
+            pose_list.append((3.0, 0.1))
             pose_list.append((4.0, 0.0))
 
             pose_list.append((0.0, -1.3))
@@ -894,7 +894,7 @@ def main(args=None):
             #         + "Hz"
             #     )
 
-            time.sleep(45)
+            time.sleep(40)
     except KeyboardInterrupt:
         pass
 
