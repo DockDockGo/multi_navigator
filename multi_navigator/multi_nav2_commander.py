@@ -47,9 +47,24 @@ class MultiNavigator(Node):
         self.namespaces = namespaces
         self.time_taken = []
         self.nav_to_pose_clients = {}
-        self.ENVIRONMENT = os.environ.get("MAP_NAME", "svd_demo")
+        self.ENVIRONMENT = os.environ.get("MAP_NAME", "mfi")
+
+        self.initial_pose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, "/robot1/initialpose", 10
+        )
+        self.initial_pose = PoseStamped()
+        self.initial_pose.header.frame_id = "map"
+        self.initial_pose.header.stamp = self.get_clock().now().to_msg()
+        self.initial_pose.pose.position.x = 1.0
+        self.initial_pose.pose.position.y = 5.0
+        self.initial_pose.pose.position.z = 0.0
+        self.initial_pose.pose.orientation.x = 0.0
+        self.initial_pose.pose.orientation.y = 0.0
+        self.initial_pose.pose.orientation.z = 0.0
+        self.initial_pose.pose.orientation.w = 1.0
 
         for namespace in namespaces:
+            print("Action client used = ", "/" + namespace + "/navigate_to_pose")
             self.nav_to_pose_clients[namespace] = ActionClient(
                 self, NavigateToPose, "/" + namespace + "/navigate_to_pose"
             )
@@ -63,11 +78,16 @@ class MultiNavigator(Node):
 
         # self.pose_list = self.init_pose_config_workspace_0()
         self.pose_list = self.init_pose_config()
+        self.past_poses = []
 
+        self.itr = 0
         # timer_period = 60  # seconds
         # self.timer = self.create_timer(timer_period, self.timer_callback)
 
     def init_pose_config(self):
+        # ------------------- set initial pose
+        self._setInitialPose()
+        # --------------------
 
         pose_list = []
 
@@ -149,14 +169,26 @@ class MultiNavigator(Node):
             pose_list.append((-1.5, 1.5))
             pose_list.append((-3.0, 2.0))
 
+        if self.ENVIRONMENT == "mfi":
+            # pose_list.append((1.142, 5.321, 0.0, 0.0, -0.5417, 0.84054))
+            # pose_list.append((3.0603, 0.79884, 0.0, 0.0, -0.97741, 0.2113))
+            # pose_list.append((-0.1606, -1.848, 0.0, 0.0, -0.5209, -0.85357))
+
+            # 1.399 5.0
+            pose_list.append((1.0, 5.0))
+            pose_list.append((3.44, -0.5269))
+            pose_list.append((-0.205, -2.243))
+            pose_list.append((-1.222, 4.03358))
+
         return pose_list
 
     def timer_callback(self):
         # This function calls goToPose for every namespace
-        past_poses = []
-        for namespace in self.namespaces:
-            pose = self.computeRandomPoses(past_poses, namespace)
-            self.goToPose(pose, namespace)
+        # past_poses = []
+        # for namespace in self.namespaces:
+        # pose = self.computeRandomPosesSingle(namespace)
+        self.goToPose(self.pose_list[self.itr], self.namespaces[0])
+        self.itr = (self.itr + 1) % 4
 
     def computeRandomPoses(self, past_poses, namespace):
         self.info("Computing random pose for namespace " + namespace)
@@ -181,6 +213,34 @@ class MultiNavigator(Node):
 
         return goal_pose
 
+    def computeRandomPosesSingle(self, namespace):
+        self.info("Computing random pose for namespace " + namespace)
+        print("len of pose list = ", len(self.pose_list))
+
+        pose = self.pose_list[randint(0, len(self.pose_list) - 1)]
+        while pose in self.past_poses:
+            self.debug("finding new pose")
+            pose = self.pose_list[randint(0, len(self.pose_list) - 1)]
+
+        # past_poses.append(pose)
+        self.past_poses = [pose]
+
+        self.info("pose for " + namespace + " is " + str(pose) + "...")
+
+        goal_pose = PoseStamped()
+        goal_pose.header.frame_id = "map"
+        goal_pose.header.stamp = self.get_clock().now().to_msg()
+        goal_pose.pose.position.x = pose[0] * 1.0
+        goal_pose.pose.position.y = pose[1] * 1.0
+        goal_pose.pose.position.z = 0.0
+        goal_pose.pose.orientation.w = 1.0
+        # goal_pose.pose.orientation.x = pose[2] * 1.0
+        # goal_pose.pose.orientation.y = pose[3] * 1.0
+        # goal_pose.pose.orientation.z = pose[4] * 1.0
+        # goal_pose.pose.orientation.w = pose[5] * 1.0
+
+        return goal_pose
+
     def goToPose(self, pose, namespace, behavior_tree=""):
         """Send a `NavToPose` action request."""
         self.debug("Waiting for 'NavigateToPose' action server")
@@ -191,16 +251,21 @@ class MultiNavigator(Node):
         # self.cancelTask(namespace)
 
         goal_msg = NavigateToPose.Goal()
-        goal_msg.pose = pose
-        goal_msg.behavior_tree = behavior_tree
+        # goal_msg = PoseStamped()
+        goal_msg.pose.header.frame_id = "map"
+        goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.pose.pose.position.x = pose[0] * 1.0
+        goal_msg.pose.pose.position.y = pose[1] * 1.0
+        goal_msg.pose.pose.position.z = 0.0
+        goal_msg.pose.pose.orientation.w = 0.0
 
         self.info(
             "Navigating to goal for namespace "
             + namespace
             + " : "
-            + str(pose.pose.position.x)
+            + str(goal_msg.pose.pose.position.x)
             + " "
-            + str(pose.pose.position.y)
+            + str(goal_msg.pose.pose.position.y)
             + "..."
         )
         send_goal_future = self.nav_to_pose_clients[namespace].send_goal_async(
@@ -222,12 +287,12 @@ class MultiNavigator(Node):
         self.result_future[namespace] = self.goal_handle[namespace].get_result_async()
         return True
 
-    def timer_callback(self):
-        # This function calls goToPose for every namespace
-        past_poses = []
-        for namespace in self.namespaces:
-            pose = self.computeRandomPoses(past_poses, namespace)
-            self.goToPose(pose, namespace)
+    # def timer_callback(self):
+    #     # This function calls goToPose for every namespace
+    #     past_poses = []
+    #     for namespace in self.namespaces:
+    #         pose = self.computeRandomPoses(past_poses, namespace)
+    #         self.goToPose(pose, namespace)
 
     def benchmark_callback(self):
         # This function calls computePathCb for every namespace
@@ -235,7 +300,7 @@ class MultiNavigator(Node):
         for namespace in self.namespaces:
             pose = self.computeRandomPoses(past_poses, namespace)
             self.dt[namespace] = self.get_clock().now()
-            path = self.computePathCb(pose, namespace)
+            # path = self.computePathCb(pose, namespace)
             # self.info(path)
 
     def computePathCb(self, goal_pose, namespace):
@@ -796,14 +861,14 @@ class MultiNavigator(Node):
         self.feedback = msg.feedback
         return
 
-    # def _setInitialPose(self):
-    #     msg = PoseWithCovarianceStamped()
-    #     msg.pose.pose = self.initial_pose.pose
-    #     msg.header.frame_id = self.initial_pose.header.frame_id
-    #     msg.header.stamp = self.initial_pose.header.stamp
-    #     self.info("Publishing Initial Pose")
-    #     self.initial_pose_pub.publish(msg)
-    #     return
+    def _setInitialPose(self):
+        msg = PoseWithCovarianceStamped()
+        msg.pose.pose = self.initial_pose.pose
+        msg.header.frame_id = self.initial_pose.header.frame_id
+        msg.header.stamp = self.initial_pose.header.stamp
+        self.info("Publishing Initial Pose")
+        self.initial_pose_pub.publish(msg)
+        return
 
     def info(self, msg):
         self.get_logger().info(msg)
@@ -826,14 +891,17 @@ def main(args=None):
     rclpy.init(args=args)
 
     namespaces = []
-    num_robots = os.environ.get("Number_of_Robots", "2")
+    num_robots = os.environ.get("Number_of_Robots", "1")
 
     for i in range(int(num_robots)):
-        namespaces.append("robot" + str(i))
+        namespaces.append("robot" + str(i + 1))
 
     multi_navigator = MultiNavigator(namespaces)
 
+    time.sleep(15)
+    # multi_navigator._setInitialPose()
     multi_navigator.info("Starting demo!")
+
     # Spin in a separate thread
     # thread = threading.Thread(target=rclpy.spin, args=(multi_navigator,), daemon=True)
     # thread.start()
@@ -868,7 +936,7 @@ def main(args=None):
             #         + "Hz"
             #     )
 
-            time.sleep(30)
+            time.sleep(22)
     except KeyboardInterrupt:
         pass
 
