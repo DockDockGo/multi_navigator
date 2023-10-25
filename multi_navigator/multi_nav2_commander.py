@@ -48,6 +48,7 @@ class MultiNavigator(Node):
         self.time_taken = []
         self.nav_to_pose_clients = {}
         self.ENVIRONMENT = os.environ.get("MAP_NAME", "svd_demo")
+        self.past_poses = []
 
         # for namespace in namespaces:
         #     self.nav_to_pose_clients[namespace] = ActionClient(
@@ -133,68 +134,84 @@ class MultiNavigator(Node):
             pose_list.append((-5, -3))
 
         if self.ENVIRONMENT == "svd_demo":
-            pose_list.append((-1.5, 1.5))
-            pose_list.append((-0.5, 1.5))
-
-            pose_list.append((5.5, 2.0))
-            # pose_list.append((5.5, 1.5))
-            pose_list.append((5.5, 1.0))
-            pose_list.append((5.5, 0.0))
+            # pose_list.append((-1.5, 1.5))
             # pose_list.append((5.5, -0.5))
-            pose_list.append((5.5, -1.0))
-            # pose_list.append((5.5, -1.0))
-            pose_list.append((5.5, -2.0))
+            pose_list.append((2.5, 0.0))
 
-            pose_list.append((0.0, 0.0))
-            pose_list.append((1.0, 0.0))
-            pose_list.append((2.0, 0.0))
-            pose_list.append((3.0, 0.1))
             pose_list.append((4.0, 0.0))
 
-            pose_list.append((0.0, -1.3))
-            pose_list.append((5.0, -1.3))
-            pose_list.append((6.0, -1.3))
-            pose_list.append((7.0, -1.3))
-            pose_list.append((8.0, -1.3))
-            pose_list.append((9.0, -1.3))
-            pose_list.append((10.0, -1.3))
+            pose_list.append((2.5, -2.0))
 
-            pose_list.append((0.0, -2.2))
-            pose_list.append((1.0, -2.2))
-            pose_list.append((2.0, -2.2))
-            pose_list.append((3.0, -2.2))
-            pose_list.append((4.0, -2.2))
-            pose_list.append((5.0, -2.2))
-            pose_list.append((6.0, -2.2))
-            pose_list.append((7.0, -2.2))
-            pose_list.append((8.0, -2.2))
-            pose_list.append((9.0, -2.2))
-            pose_list.append((10.0, -2.2))
+            pose_list.append((4.0, -2.0))
+            # pose_list.append((5.5, -0.5))
+            pose_list.append((-2.0, -2.0))
+
+            pose_list.append((1.0, -2.0))
+
+            pose_list.append((6.0, -2.0))
+
+            # # -----------------------
+            # pose_list.append((-1.5, 1.5))
+            # pose_list.append((-0.5, 1.5))
+
+            # pose_list.append((5.5, 2.0))
+            # pose_list.append((5.5, 1.0))
+            # pose_list.append((5.5, 0.0))
+            # pose_list.append((5.5, -1.0))
+            # pose_list.append((5.5, -2.0))
+
+            # pose_list.append((0.0, 0.0))
+            # pose_list.append((1.0, 0.0))
+            # pose_list.append((2.0, 0.0))
+            # pose_list.append((3.0, 0.1))
+            # pose_list.append((4.0, 0.0))
+
+            # pose_list.append((0.0, -1.3))
+            # pose_list.append((5.0, -1.3))
+            # pose_list.append((6.0, -1.3))
+            # pose_list.append((7.0, -1.3))
+            # pose_list.append((8.0, -1.3))
+            # pose_list.append((9.0, -1.3))
+            # pose_list.append((10.0, -1.3))
+
+            # pose_list.append((0.0, -2.2))
+            # pose_list.append((1.0, -2.2))
+            # pose_list.append((2.0, -2.2))
+            # pose_list.append((3.0, -2.2))
+            # pose_list.append((4.0, -2.2))
+            # pose_list.append((5.0, -2.2))
+            # pose_list.append((6.0, -2.2))
+            # pose_list.append((7.0, -2.2))
+            # pose_list.append((8.0, -2.2))
+            # pose_list.append((9.0, -2.2))
+            # pose_list.append((10.0, -2.2))
 
         return pose_list
 
     def timer_callback(self):
         # This function calls goToPose for every namespace
-        past_poses = []
+        #
         for namespace in self.namespaces:
-            pose = self.computeRandomPoses(past_poses, namespace)
+            pose = self.computeRandomPoses(namespace)
             self.goToPose(pose, namespace)
 
-    def computeRandomPoses(self, past_poses, namespace):
+    def computeRandomPoses(self, namespace):
         self.info("Computing random pose for namespace " + namespace)
         print("len of pose list = ", len(self.pose_list))
 
         pose = self.pose_list[randint(0, len(self.pose_list) - 1)]
-        while pose in past_poses:
+        if len(self.past_poses) == 4:
+            self.past_poses = []
+        while pose in self.past_poses:
             self.debug("finding new pose")
             pose = self.pose_list[randint(0, len(self.pose_list) - 1)]
 
-        past_poses.append(pose)
+        self.past_poses.append(pose)
 
         self.info("pose for " + namespace + " is " + str(pose) + "...")
 
         goal_pose = PoseStamped()
-        goal_pose.header.frame_id = "map"
+        goal_pose.header.frame_id = namespace
         goal_pose.header.stamp = self.get_clock().now().to_msg()
         goal_pose.pose.position.x = pose[0] * 1.0
         goal_pose.pose.position.y = pose[1] * 1.0
@@ -247,13 +264,6 @@ class MultiNavigator(Node):
 
         # self.result_future[namespace] = self.goal_handle[namespace].get_result_async()
         return True
-
-    def timer_callback(self):
-        # This function calls goToPose for every namespace
-        past_poses = []
-        for namespace in self.namespaces:
-            pose = self.computeRandomPoses(past_poses, namespace)
-            self.goToPose(pose, namespace)
 
     def benchmark_callback(self):
         # This function calls computePathCb for every namespace
@@ -893,8 +903,7 @@ def main(args=None):
             #         )
             #         + "Hz"
             #     )
-
-            time.sleep(40)
+            time.sleep(45)
     except KeyboardInterrupt:
         pass
 
