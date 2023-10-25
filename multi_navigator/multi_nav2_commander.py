@@ -48,12 +48,12 @@ class MultiNavigator(Node):
         self.time_taken = []
         self.nav_to_pose_clients = {}
         self.ENVIRONMENT = os.environ.get("MAP_NAME", "mfi")
-
-        self.initial_pose_pub = self.create_publisher(
-            PoseWithCovarianceStamped, "/robot1/initialpose", 10
-        )
+        
+        self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
+                                                '/robot1/initialpose',
+                                                10)    
         self.initial_pose = PoseStamped()
-        self.initial_pose.header.frame_id = "map"
+        self.initial_pose.header.frame_id = 'map'
         self.initial_pose.header.stamp = self.get_clock().now().to_msg()
         self.initial_pose.pose.position.x = 1.0
         self.initial_pose.pose.position.y = 5.0
@@ -64,7 +64,7 @@ class MultiNavigator(Node):
         self.initial_pose.pose.orientation.w = 1.0
 
         for namespace in namespaces:
-            print("Action client used = ", "/" + namespace + "/navigate_to_pose")
+            print( "Action client used = ", "/" + namespace + "/navigate_to_pose")
             self.nav_to_pose_clients[namespace] = ActionClient(
                 self, NavigateToPose, "/" + namespace + "/navigate_to_pose"
             )
@@ -85,6 +85,8 @@ class MultiNavigator(Node):
         # self.timer = self.create_timer(timer_period, self.timer_callback)
 
     def init_pose_config(self):
+
+
         # ------------------- set initial pose
         self._setInitialPose()
         # --------------------
@@ -174,11 +176,13 @@ class MultiNavigator(Node):
             # pose_list.append((3.0603, 0.79884, 0.0, 0.0, -0.97741, 0.2113))
             # pose_list.append((-0.1606, -1.848, 0.0, 0.0, -0.5209, -0.85357))
 
+
             # 1.399 5.0
             pose_list.append((1.0, 5.0))
             pose_list.append((3.44, -0.5269))
             pose_list.append((-0.205, -2.243))
-            pose_list.append((-1.222, 4.03358))
+            pose_list.append((-1.222,4.03358))
+
 
         return pose_list
 
@@ -186,9 +190,10 @@ class MultiNavigator(Node):
         # This function calls goToPose for every namespace
         # past_poses = []
         # for namespace in self.namespaces:
-        # pose = self.computeRandomPosesSingle(namespace)
+            # pose = self.computeRandomPosesSingle(namespace)
         self.goToPose(self.pose_list[self.itr], self.namespaces[0])
-        self.itr = (self.itr + 1) % 4
+        self.itr = (self.itr + 1 ) % 4
+
 
     def computeRandomPoses(self, past_poses, namespace):
         self.info("Computing random pose for namespace " + namespace)
@@ -233,7 +238,7 @@ class MultiNavigator(Node):
         goal_pose.pose.position.x = pose[0] * 1.0
         goal_pose.pose.position.y = pose[1] * 1.0
         goal_pose.pose.position.z = 0.0
-        goal_pose.pose.orientation.w = 1.0
+        goal_pose.pose.orientation.w = 0.0
         # goal_pose.pose.orientation.x = pose[2] * 1.0
         # goal_pose.pose.orientation.y = pose[3] * 1.0
         # goal_pose.pose.orientation.z = pose[4] * 1.0
@@ -257,7 +262,7 @@ class MultiNavigator(Node):
         goal_msg.pose.pose.position.x = pose[0] * 1.0
         goal_msg.pose.pose.position.y = pose[1] * 1.0
         goal_msg.pose.pose.position.z = 0.0
-        goal_msg.pose.pose.orientation.w = 0.0
+        goal_msg.pose.pose.orientation.w = 1.0
 
         self.info(
             "Navigating to goal for namespace "
@@ -277,9 +282,9 @@ class MultiNavigator(Node):
         if not self.goal_handle[namespace].accepted:
             self.error(
                 "Goal to "
-                + str(pose.pose.position.x)
+                + str(goal_msg.pose.pose.position.x)
                 + " "
-                + str(pose.pose.position.y)
+                + str(goal_msg.pose.pose.position.y)
                 + " was rejected!"
             )
             return False
@@ -897,7 +902,7 @@ def main(args=None):
         namespaces.append("robot" + str(i + 1))
 
     multi_navigator = MultiNavigator(namespaces)
-
+    
     time.sleep(15)
     # multi_navigator._setInitialPose()
     multi_navigator.info("Starting demo!")
