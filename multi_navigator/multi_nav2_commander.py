@@ -49,44 +49,62 @@ class MultiNavigator(Node):
         self.nav_to_pose_clients = {}
         self.ENVIRONMENT = os.environ.get("MAP_NAME", "mfi")
 
-        self.initial_pose_pub = self.create_publisher(
-            PoseWithCovarianceStamped, "/robot1/initialpose", 10
-        )
-        self.initial_pose = PoseStamped()
-        self.initial_pose.header.frame_id = "map"
-        self.initial_pose.header.stamp = self.get_clock().now().to_msg()
-        self.initial_pose.pose.position.x = 1.0
-        self.initial_pose.pose.position.y = 5.0
-        self.initial_pose.pose.position.z = 0.0
-        self.initial_pose.pose.orientation.x = 0.0
-        self.initial_pose.pose.orientation.y = 0.0
-        self.initial_pose.pose.orientation.z = 0.0
-        self.initial_pose.pose.orientation.w = 1.0
+        self.initial_pose_pub = {}
+        self.initial_poses = {}
+        for namespace in namespaces:
+            self.initial_pose_pub[namespace] = self.create_publisher(
+                PoseWithCovarianceStamped, "/" + namespace + "/initialpose", 10
+            )
+            self.initial_poses[namespace] = PoseStamped()
+            self.initial_poses[namespace].header.frame_id = "map"
+            self.initial_poses[namespace].header.stamp = self.get_clock().now().to_msg()
+
+        self.initial_poses[namespaces[0]].pose.position.x = -0.1143
+        self.initial_poses[namespaces[0]].pose.position.y = -0.4869
+        self.initial_poses[namespaces[0]].pose.position.z = 0.0
+        self.initial_poses[namespaces[0]].pose.orientation.x = 0.0
+        self.initial_poses[namespaces[0]].pose.orientation.y = 0.0
+        self.initial_poses[namespaces[0]].pose.orientation.z = 0.025952
+        self.initial_poses[namespaces[0]].pose.orientation.w = 0.9996
+
+        self.initial_poses[namespaces[1]].pose.position.x = 0.6996
+        self.initial_poses[namespaces[1]].pose.position.y = -5.0157
+        self.initial_poses[namespaces[1]].pose.position.z = 0.0
+        self.initial_poses[namespaces[1]].pose.orientation.x = 0.0
+        self.initial_poses[namespaces[1]].pose.orientation.y = -0.0
+        self.initial_poses[namespaces[1]].pose.orientation.z = -0.99999
+        self.initial_poses[namespaces[1]].pose.orientation.w = -0.0041
 
         for namespace in namespaces:
             print("Action client used = ", "/" + namespace + "/navigate_to_pose")
             self.nav_to_pose_clients[namespace] = ActionClient(
                 self, NavigateToPose, "/" + namespace + "/navigate_to_pose"
             )
+            print(self.nav_to_pose_clients[namespace])
 
         self.dt = {}
-        self.compute_path_to_pose_clients = {}
-        for namespace in namespaces:
-            self.compute_path_to_pose_clients[namespace] = ActionClient(
-                self, ComputePathToPose, "/" + namespace + "/compute_path_to_pose"
-            )
+        # self.compute_path_to_pose_clients = {}
+        # for namespace in namespaces:
+        #     self.compute_path_to_pose_clients[namespace] = ActionClient(
+        #         self, ComputePathToPose, "/" + namespace + "/compute_path_to_pose"
+        #     )
 
         # self.pose_list = self.init_pose_config_workspace_0()
+        self._setInitialPose()
+
         self.pose_list = self.init_pose_config()
         self.past_poses = []
 
-        self.itr = 0
+        self.itr = {}
+        self.itr[namespaces[0]] = 0
+        self.itr[namespaces[1]] = 2
+
+        self.pose_itr = 0
         # timer_period = 60  # seconds
         # self.timer = self.create_timer(timer_period, self.timer_callback)
 
     def init_pose_config(self):
         # ------------------- set initial pose
-        self._setInitialPose()
         # --------------------
 
         pose_list = []
@@ -175,10 +193,20 @@ class MultiNavigator(Node):
             # pose_list.append((-0.1606, -1.848, 0.0, 0.0, -0.5209, -0.85357))
 
             # 1.399 5.0
-            pose_list.append((1.0, 5.0))
-            pose_list.append((3.44, -0.5269))
-            pose_list.append((-0.205, -2.243))
-            pose_list.append((-1.222, 4.03358))
+            # pose_list.append((1.0, 5.0))
+            # pose_list.append((3.44, -0.5269))
+            # pose_list.append((-0.205, -2.243))
+            # pose_list.append((-1.222, 4.03358))
+
+            # pose_list.append((-0.64, -0.757, -0.009, 0.999))  # left bottom corner
+            pose_list.append((1.246, -0.0101, 0.002, 0.9999))  #
+
+            # pose_list.append((1.65, -0.5126, -0.998, -0.04))  # left top
+            pose_list.append((1.557, -6.05744, -0.7181, -0.6958))  # left top
+
+            pose_list.append((-1.0, -5.16, 0.7201, 0.69384))  #
+
+            pose_list.append((-0.71477, -0.179399, 0.000, 0.999))  # right bottom
 
         return pose_list
 
@@ -187,8 +215,17 @@ class MultiNavigator(Node):
         # past_poses = []
         # for namespace in self.namespaces:
         # pose = self.computeRandomPosesSingle(namespace)
-        self.goToPose(self.pose_list[self.itr], self.namespaces[0])
-        self.itr = (self.itr + 1) % 4
+        # temp = self.pose_itr
+        for namespace in self.namespaces:
+            # print(f"{namespace}: itr: {self.itr[namespace]}")
+
+            self.goToPose(self.pose_list[self.itr[namespace]], namespace)
+            self.itr[namespace] = (self.itr[namespace] + 1) % 4
+            print(f"{self.pose_itr}")
+        #     self.goToPose(self.initial_poses[self.namespaces[self.pose_itr]], namespace)
+        #     self.pose_itr = int(not self.pose_itr)
+        # self.pose_itr = int(not self.pose_itr)
+        # self.pose_itr = int(not temp)
 
     def computeRandomPoses(self, past_poses, namespace):
         self.info("Computing random pose for namespace " + namespace)
@@ -245,8 +282,10 @@ class MultiNavigator(Node):
         """Send a `NavToPose` action request."""
         self.debug("Waiting for 'NavigateToPose' action server")
 
-        while not self.nav_to_pose_clients[namespace].wait_for_server(timeout_sec=1.0):
-            self.info("'NavigateToPose' action server not available, waiting...")
+        while not self.nav_to_pose_clients[namespace].wait_for_server(timeout_sec=5.0):
+            self.info(
+                f"'NavigateToPose' {namespace} action server not available, waiting..."
+            )
 
         # self.cancelTask(namespace)
 
@@ -256,8 +295,10 @@ class MultiNavigator(Node):
         goal_msg.pose.header.stamp = self.get_clock().now().to_msg()
         goal_msg.pose.pose.position.x = pose[0] * 1.0
         goal_msg.pose.pose.position.y = pose[1] * 1.0
-        goal_msg.pose.pose.position.z = 0.0
-        goal_msg.pose.pose.orientation.w = 1.0
+        goal_msg.pose.pose.position.z = pose[2] * 1.0
+        goal_msg.pose.pose.orientation.w = pose[3] * 1.0
+
+        # goal_msg.pose.pose = pose.pose
 
         self.info(
             "Navigating to goal for namespace "
@@ -863,11 +904,12 @@ class MultiNavigator(Node):
 
     def _setInitialPose(self):
         msg = PoseWithCovarianceStamped()
-        msg.pose.pose = self.initial_pose.pose
-        msg.header.frame_id = self.initial_pose.header.frame_id
-        msg.header.stamp = self.initial_pose.header.stamp
-        self.info("Publishing Initial Pose")
-        self.initial_pose_pub.publish(msg)
+        for namespace in self.namespaces:
+            msg.pose.pose = self.initial_poses[namespace].pose
+            msg.header.frame_id = self.initial_poses[namespace].header.frame_id
+            msg.header.stamp = self.get_clock().now().to_msg()
+            self.info("Publishing Initial Pose")
+            self.initial_pose_pub[namespace].publish(msg)
         return
 
     def info(self, msg):
@@ -891,10 +933,15 @@ def main(args=None):
     rclpy.init(args=args)
 
     namespaces = []
-    num_robots = os.environ.get("Number_of_Robots", "1")
+    num_robots = os.environ.get("Number_of_Robots", "2")
 
     for i in range(int(num_robots)):
         namespaces.append("robot" + str(i + 1))
+
+    # print(namespaces)
+    # namespaces = namespaces[::-1]
+
+    # print(namespaces)
 
     multi_navigator = MultiNavigator(namespaces)
 
