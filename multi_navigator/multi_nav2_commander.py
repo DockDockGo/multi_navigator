@@ -5,7 +5,7 @@ from random import randint
 from action_msgs.msg import GoalStatus
 from builtin_interfaces.msg import Duration
 from geometry_msgs.msg import Point
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import AssistedTeleop, BackUp, Spin
@@ -16,6 +16,14 @@ from nav2_msgs.action import (
     # NavigateThroughPoses,
     NavigateToPose,
 )
+from ddg_multi_robot_srvs.srv import GetMultiPlan, DdgExecuteWaypoints
+from nav_msgs.msg import Path
+
+# from geometry_msgs.msg import , PoseStamped
+import tf2_ros
+import tf2_geometry_msgs
+from threading import Event
+from rclpy.callback_groups import ReentrantCallbackGroup
 
 # from nav2_msgs.action import SmoothPath
 from nav2_msgs.srv import ClearEntireCostmap, GetCostmap, LoadMap, ManageLifecycleNodes
@@ -27,6 +35,14 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 import os
+import numpy as np
+
+# import pandas as pd
+import csv
+from std_msgs.msg import Float32MultiArray
+import datetime
+from rclpy.executors import MultiThreadedExecutor
+import random
 
 
 class TaskResult(Enum):
@@ -40,6 +56,18 @@ class MultiNavigator(Node):
     def __init__(self, namespaces=[], node_name="multi_navigator"):
         super().__init__(node_name=node_name)
 
+        """
+        TODO: 
+        DONE 0. Map path visualization! -> probably should go in ddg_waypoint_follower + goal and start pose visualization.
+
+        Code structure:
+        1. service client to CBS planner 
+        2. N namespaced service clients for ddg_waypoint_follower
+        3. N namespaced subscribers to {robot_namespace}/map_pose OR tf buffer? 
+        """
+
+        self.isDecentralized = True
+
         self.goal_handle = {}
         self.result_future = {}
         self.feedback = None
@@ -49,30 +77,135 @@ class MultiNavigator(Node):
         self.nav_to_pose_clients = {}
         self.ENVIRONMENT = os.environ.get("MAP_NAME", "svd_demo")
         self.past_poses = []
+        # self.robot_pose_update_timer = self.create_timer(0.5, self.robot_pose_update)
+        self.robot_current_state = {}
 
-        # for namespace in namespaces:
-        #     self.nav_to_pose_clients[namespace] = ActionClient(
-        #         self, NavigateToPose, "/" + namespace + "/navigate_to_pose"
-        #     )
+        self.metric_publisher = self.create_publisher(
+            Float32MultiArray, "experiment/metrics", 10
+        )
+        # time_delta
+        self.time_delta = None
+        self.callback_group = ReentrantCallbackGroup()
 
-        # self.dt = {}
-        # self.compute_path_to_pose_clients = {}
-        # for namespace in namespaces:
-        #     self.compute_path_to_pose_clients[namespace] = ActionClient(
-        #         self, ComputePathToPose, "/" + namespace + "/compute_path_to_pose"
-        #     )
+        # Global Planner Service Client
+        self._global_planner_client = self.create_client(
+            GetMultiPlan,
+            "/multi_robot_planner/get_plan",
+            callback_group=self.callback_group,
+        )
+        self.get_plan_request = GetMultiPlan.Request()
 
-        self.send_goal_publisher = {}
-        for namespace in namespaces:
-            self.send_goal_publisher[namespace] = self.create_publisher(
-                PoseStamped, "/" + namespace + "/cbs_path/goal_pose", 10
+        self.waypoint_follower_service_clients = {}
+        for namespace in self.namespaces:
+            srvice_name = "/" + namespace + "/" + "ddg_navigate_through_poses"
+            self.waypoint_follower_service_clients[namespace] = self.create_client(
+                srv_type=DdgExecuteWaypoints,
+                srv_name=srvice_name,
+                callback_group=self.callback_group,
             )
 
-        # self.pose_list = self.init_pose_config_workspace_0()
+        self.ddg_waypoint_follower_path = DdgExecuteWaypoints.Request()
+
+        # callback_group=self.callback_group)
+
+        # while not self.ddg_waypoint_follower.wait_for_service(timeout_sec=5.0):
+        #     self.get_logger().warn("DDG Waypoint Follower Service not available, waiting...")
+
+        # while not self._global_planner_client.wait_for_service(timeout_sec=5.0):
+        #     self.get_logger().warn("DDG Multi Robot Planner Service not available, waiting...")
+
+        for namespace in self.namespaces:
+            self.robot_current_state[namespace] = None
+
         self.pose_list = self.init_pose_config()
 
-        # timer_period = 60  # seconds
-        # self.timer = self.create_timer(timer_period, self.timer_callback)
+        self.timer = self.create_timer(1, self.timer_callback)
+
+        self.has_goal_reached = np.zeros(len(self.namespaces)).astype(bool)
+        self.metrics_data = {}
+        self.robot_goal_pose = {}
+        for namespace in self.namespaces:
+            self.metrics_data[namespace] = np.zeros(4)
+            self.robot_goal_pose[namespace] = None
+
+        # self.data_accumulator = pd.DataFrame(
+        #     columns=["robot_id", "start_time", "end_time", "time_taken()"]
+        # )
+
+        base_file_path = "/home/vineet/mfi_multiagent_sim/experiment-data/"
+
+        if not self.isDecentralized:
+            self.csv_file_name = base_file_path + "cbs-exp"
+        else:
+            self.csv_file_name = base_file_path + "decentralized-exp"
+
+        now = datetime.datetime.now()
+        self.csv_file_name = (
+            self.csv_file_name + now.strftime("%Y-%m-%d-%H-%M-%S") + ".csv"
+        )
+        self.csv_writer = csv.writer(open(self.csv_file_name, "w", newline=""))
+        self.csv_writer.writerow(
+            [
+                "Robot ID",
+                "Start Time (nano sec)",
+                "End Time(nano sec)",
+                "Time Taken(ms)",
+                "Distance",
+            ]
+        )
+        self._get_waypoints_complete = Event()
+        self._get_waypoints_complete.clear()
+        self.combined_waypoints = None
+
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
+    def get_waypoints_from_planner(self, future):
+        if future.done():
+            self.get_logger().info(f"received the plan \n {future.result().plan}")
+            self.combined_waypoints = future.result().plan
+        self._get_waypoints_complete.set()
+
+    def robot_pose_update(self):
+        try:
+            for namespace in self.namespaces:
+                try:
+                    # self.get_logger().info(f"received pose for ({namespace}) !")
+                    # Get the transform from "base_link" to "map"
+                    transform_stamped = self.tf_buffer.lookup_transform(
+                        "map", namespace + "/base_link", rclpy.time.Time()
+                    )
+
+                    # Convert the transform to a PoseStamped message
+                    pose_stamped = PoseStamped()
+                    pose_stamped.header.frame_id = "map"
+                    pose_stamped.pose.position.x = (
+                        transform_stamped.transform.translation.x
+                    )
+                    pose_stamped.pose.position.y = (
+                        transform_stamped.transform.translation.y
+                    )
+                    pose_stamped.pose.position.z = (
+                        transform_stamped.transform.translation.z
+                    )
+                    pose_stamped.pose.orientation = transform_stamped.transform.rotation
+                    self.robot_current_state[namespace] = pose_stamped
+                    # self.get_logger().info(
+                    #     f"received pose for ({pose_stamped.pose.position.x}, {pose_stamped.pose.position.y}) !"
+                    # )
+                    # self.get_logger().info(f"received pose for {pose_stamped}!")
+                except (
+                    tf2_ros.LookupException,
+                    tf2_ros.ConnectivityException,
+                    tf2_ros.ExtrapolationException,
+                ) as e:
+                    self.get_logger().warn(
+                        "TF lookup failed for {namespace}: {}".format(str(e))
+                    )
+        except Exception as e:
+            self.get_logger().warn(
+                "Error in finding pose for the namespaces: {}".format(str(e))
+            )
 
     def init_pose_config(self):
         pose_list = []
@@ -144,81 +277,227 @@ class MultiNavigator(Node):
 
             pose_list.append((4.0, -2.0))
             # pose_list.append((5.5, -0.5))
+
+            pose_list.append((0.1, -1.0))
+
             pose_list.append((-2.0, -2.0))
+
+            pose_list.append((-2.0, 1.5))
 
             pose_list.append((1.0, -2.0))
 
             pose_list.append((6.0, -2.0))
 
-            # # -----------------------
-            # pose_list.append((-1.5, 1.5))
-            # pose_list.append((-0.5, 1.5))
+            # pose_list.append((7.0, -1.0))
 
-            # pose_list.append((5.5, 2.0))
+            # pose_list.append((8.0, -2.0))
+
             # pose_list.append((5.5, 1.0))
-            # pose_list.append((5.5, 0.0))
-            # pose_list.append((5.5, -1.0))
-            # pose_list.append((5.5, -2.0))
-
-            # pose_list.append((0.0, 0.0))
-            # pose_list.append((1.0, 0.0))
-            # pose_list.append((2.0, 0.0))
-            # pose_list.append((3.0, 0.1))
-            # pose_list.append((4.0, 0.0))
-
-            # pose_list.append((0.0, -1.3))
-            # pose_list.append((5.0, -1.3))
-            # pose_list.append((6.0, -1.3))
-            # pose_list.append((7.0, -1.3))
-            # pose_list.append((8.0, -1.3))
-            # pose_list.append((9.0, -1.3))
-            # pose_list.append((10.0, -1.3))
-
-            # pose_list.append((0.0, -2.2))
-            # pose_list.append((1.0, -2.2))
-            # pose_list.append((2.0, -2.2))
-            # pose_list.append((3.0, -2.2))
-            # pose_list.append((4.0, -2.2))
-            # pose_list.append((5.0, -2.2))
-            # pose_list.append((6.0, -2.2))
-            # pose_list.append((7.0, -2.2))
-            # pose_list.append((8.0, -2.2))
-            # pose_list.append((9.0, -2.2))
-            # pose_list.append((10.0, -2.2))
 
         return pose_list
 
     def timer_callback(self):
-        # This function calls goToPose for every namespace
-        #
-        for namespace in self.namespaces:
-            pose = self.computeRandomPoses(namespace)
-            self.goToPose(pose, namespace)
+        self.robot_pose_update()
 
-    def computeRandomPoses(self, namespace):
-        self.info("Computing random pose for namespace " + namespace)
+        for namespace in self.namespaces:
+            # check if we are able to get the robot current state otherwise it is not possible to plan
+            if self.robot_current_state[namespace] is None:
+                self.robot_pose_update()
+                return
+
+        # # ----------------------------------
+        # self.computeRandomPoses()
+        # for namespace in self.namespaces:
+        #     # self.robot_goal_pose[namespace] = self.computeRandomPoses(namespace)
+        #     self.get_plan_request.start.append(self.robot_current_state[namespace])
+        #     self.get_plan_request.goal.append(self.robot_goal_pose[namespace])
+        #     self.info(
+        #         "Start pose for "
+        #         + namespace
+        #         + " is ("
+        #         + str(self.robot_current_state[namespace].pose.position.x)
+        #         + ","
+        #         + str(self.robot_current_state[namespace].pose.position.y)
+        #         + ")"
+        #     )
+        #     self.info(
+        #         "Goal pose for "
+        #         + namespace
+        #         + " is ("
+        #         + str(self.robot_goal_pose[namespace].pose.position.x)
+        #         + ","
+        #         + str(self.robot_goal_pose[namespace].pose.position.y)
+        #         + ")"
+        #     )
+        # self.info("--------------------------------------------")
+        # -----------------------------------
+
+        if self.has_goal_reached.all():
+            # assign new goals here.
+
+            self.get_plan_request.start = []
+            self.get_plan_request.goal = []
+            # get a random different start and goal pose for each robot
+            self.computeRandomPoses()
+            for namespace in self.namespaces:
+                self.get_plan_request.start.append(self.robot_current_state[namespace])
+                self.get_plan_request.goal.append(self.robot_goal_pose[namespace])
+                self.info(
+                    "Start pose for "
+                    + namespace
+                    + " is ("
+                    + str(self.robot_current_state[namespace].pose.position.x)
+                    + ","
+                    + str(self.robot_current_state[namespace].pose.position.y)
+                    + ")"
+                )
+                self.info(
+                    "Goal pose for "
+                    + namespace
+                    + " is ("
+                    + str(self.robot_goal_pose[namespace].pose.position.x)
+                    + ","
+                    + str(self.robot_goal_pose[namespace].pose.position.y)
+                    + ")"
+                )
+
+            if self.isDecentralized:
+                i = 0
+                for namespace in self.namespaces:
+                    self.info("Sending waypoints to " + namespace)
+                    self.metrics_data[namespace][0] = self.get_clock().now().nanoseconds
+                    self.metrics_data[namespace][3] = self.calcDist(
+                        self.robot_current_state[namespace],
+                        self.robot_goal_pose[namespace],
+                    )
+                    self.has_goal_reached[i] = False
+                    msg = Path()
+                    msg.header.frame_id = "map"
+                    msg.header.stamp = self.get_clock().now().to_msg()
+                    msg.poses.append(self.robot_goal_pose[namespace])
+                    # if self.isDecentralized:
+                    #     msg.poses = msg.poses[-1]
+                    self.ddg_waypoint_follower_path.waypoints = msg
+                    self.waypoint_follower_service_clients[namespace].call_async(
+                        self.ddg_waypoint_follower_path
+                    )
+
+                    i += 1
+            else:
+                self.combined_waypoints = None
+                self._get_waypoints_complete.clear()
+                get_plan_future = self._global_planner_client.call_async(
+                    self.get_plan_request
+                )
+                get_plan_future.add_done_callback(self.get_waypoints_from_planner)
+                self._get_waypoints_complete.wait()
+                if self.combined_waypoints is None:
+                    self.get_logger().error("No plan received from the planner!")
+                    return
+
+                i = 0
+                for namespace in self.namespaces:
+                    self.info("Sending waypoints to " + namespace)
+                    self.metrics_data[namespace][0] = self.get_clock().now().nanoseconds
+                    self.metrics_data[namespace][3] = self.calcDist(
+                        self.robot_current_state[namespace],
+                        self.robot_goal_pose[namespace],
+                    )
+                    self.has_goal_reached[i] = False
+                    msg = self.combined_waypoints[i]
+                    msg.header.frame_id = "map"
+                    msg.header.stamp = self.get_clock().now().to_msg()
+                    # if self.isDecentralized:
+                    #     msg.poses = msg.poses[-1]
+                    self.ddg_waypoint_follower_path.waypoints = msg
+                    self.waypoint_follower_service_clients[namespace].call_async(
+                        self.ddg_waypoint_follower_path
+                    )
+
+                    i += 1
+        else:
+            # check if goal reached for every robot!
+            i = 0
+            for namespace in self.namespaces:
+                if self.is_goal_reached(namespace) or (
+                    (
+                        self.get_clock().now().nanoseconds
+                        - self.metrics_data[namespace][0]
+                    )
+                    / 1e6
+                    > 120000
+                ):
+                    self.metrics_data[namespace][1] = self.get_clock().now().nanoseconds
+                    self.metrics_data[namespace][2] = (
+                        self.metrics_data[namespace][1]
+                        - self.metrics_data[namespace][0]
+                    ) / 1e6
+                    self.has_goal_reached[i] = True
+                i += 1
+
+            if self.has_goal_reached.all():
+                self.dump_accumultor_data()
+
+    def dump_accumultor_data(self):
+        self.time_delta = Float32MultiArray()
+        # self.time_delta.data = []
+        time_data_ = []
+        for namespace in self.namespaces:
+            time_data_.append(float(self.metrics_data[namespace][2]))
+            data = [namespace] + self.metrics_data[namespace].flatten().tolist()
+            self.csv_writer.writerow(data)
+        time_data_.append(float(np.mean(time_data_)))
+        self.time_delta.data = time_data_
+        self.metric_publisher.publish(self.time_delta)
+
+    def is_goal_reached(self, namespace):
+        dist = self.calcDist(
+            self.robot_current_state[namespace], self.robot_goal_pose[namespace]
+        )
+        if dist < 0.4:
+            return True
+        return False
+
+    def calcDist(self, pose1, pose2):
+        if (pose1 is None) or (pose2 is None):
+            return 0.0
+
+        return np.sqrt(
+            (pose1.pose.position.x - pose2.pose.position.x) ** 2
+            + (pose1.pose.position.y - pose2.pose.position.y) ** 2
+        )
+
+    def computeRandomPoses(self):
+        self.info("Computing random pose")
         print("len of pose list = ", len(self.pose_list))
 
-        pose = self.pose_list[randint(0, len(self.pose_list) - 1)]
-        if len(self.past_poses) == 4:
-            self.past_poses = []
-        while pose in self.past_poses:
-            self.debug("finding new pose")
-            pose = self.pose_list[randint(0, len(self.pose_list) - 1)]
+        random_poses = random.sample(self.pose_list, len(self.namespaces))
+        itr = 0
+        for name in self.namespaces:
+            goal_pose = PoseStamped()
+            goal_pose.header.frame_id = "map"
+            goal_pose.header.stamp = self.get_clock().now().to_msg()
+            goal_pose.pose.position.x = random_poses[itr][0] * 1.0
+            goal_pose.pose.position.y = random_poses[itr][1] * 1.0
+            goal_pose.pose.position.z = 0.0
+            goal_pose.pose.orientation.x = 0.0
+            goal_pose.pose.orientation.y = 0.0
+            goal_pose.pose.orientation.z = 0.0
+            goal_pose.pose.orientation.w = 1.0
 
-        self.past_poses.append(pose)
+            self.robot_goal_pose[name] = goal_pose
 
-        self.info("pose for " + namespace + " is " + str(pose) + "...")
+            itr += 1
 
-        goal_pose = PoseStamped()
-        goal_pose.header.frame_id = namespace
-        goal_pose.header.stamp = self.get_clock().now().to_msg()
-        goal_pose.pose.position.x = pose[0] * 1.0
-        goal_pose.pose.position.y = pose[1] * 1.0
-        goal_pose.pose.position.z = 0.0
-        goal_pose.pose.orientation.w = 0.0
+        return
 
-        return goal_pose
+    def checkIfRobotPoseDuplicate(self, pose_list, target_pose):
+        for pose in pose_list:
+            if (target_pose[0] - pose.pose.position.x) < 1e-4 and (
+                target_pose[1] - pose.pose.position.y
+            ) < 1e-4:
+                return True
+        return False
 
     def goToPose(self, pose, namespace, behavior_tree=""):
         """Send a `NavToPose` action request."""
@@ -266,13 +545,14 @@ class MultiNavigator(Node):
         return True
 
     def benchmark_callback(self):
+        pass
         # This function calls computePathCb for every namespace
-        past_poses = []
-        for namespace in self.namespaces:
-            pose = self.computeRandomPoses(past_poses, namespace)
-            self.dt[namespace] = self.get_clock().now()
-            path = self.computePathCb(pose, namespace)
-            # self.info(path)
+        # past_poses = []
+        # for namespace in self.namespaces:
+        #     pose = self.coomputeRandomPoses(past_poses, namespace)
+        #     self.dt[namespace] = self.get_clock().now()
+        #     path = self.computePathCb(pose, namespace)
+        # self.info(path)
 
     def computePathCb(self, goal_pose, namespace):
         self.debug("Waiting for 'ComputePathToPose' action server")
@@ -867,9 +1147,6 @@ def main(args=None):
     for i in range(int(num_robots)):
         namespaces.append("robot" + str(i))
 
-    multi_navigator = MultiNavigator(namespaces)
-
-    multi_navigator.info("Starting demo!")
     # Spin in a separate thread
     # thread = threading.Thread(target=rclpy.spin, args=(multi_navigator,), daemon=True)
     # thread.start()
@@ -878,32 +1155,40 @@ def main(args=None):
 
     # multi_navigator.run_demo()
     try:
-        while rclpy.ok():
-            multi_navigator.timer_callback()
+        executor = MultiThreadedExecutor()
+        # start the MotionActionServer
+        multi_navigator = MultiNavigator(namespaces)
 
-            # multi_navigator.benchmark_callback()
-            # if multi_navigator.time_taken:
-            #     print(
-            #         "Average time taken = "
-            #         + str(
-            #             sum(multi_navigator.time_taken)
-            #             / len(multi_navigator.time_taken)
-            #         )
-            #         + " ms seconds"
-            #     )
+        multi_navigator.info("Starting demo!")
 
-            #     print(
-            #         "Rate "
-            #         + str(
-            #             1000.0
-            #             / (
-            #                 sum(multi_navigator.time_taken)
-            #                 / len(multi_navigator.time_taken)
-            #             )
-            #         )
-            #         + "Hz"
-            #     )
-            time.sleep(45)
+        rclpy.spin(multi_navigator, executor)
+        # while rclpy.ok():
+        #     rclpy.spin_once(multi_navigator)
+        # multi_navigator.timer_callback()
+
+        # multi_navigator.benchmark_callback()
+        # if multi_navigator.time_taken:
+        #     print(
+        #         "Average time taken = "
+        #         + str(
+        #             sum(multi_navigator.time_taken)
+        #             / len(multi_navigator.time_taken)
+        #         )
+        #         + " ms seconds"
+        #     )
+
+        #     print(
+        #         "Rate "
+        #         + str(
+        #             1000.0
+        #             / (
+        #                 sum(multi_navigator.time_taken)
+        #                 / len(multi_navigator.time_taken)
+        #             )
+        #         )
+        #         + "Hz"
+        #     )
+        # time.sleep(45)
     except KeyboardInterrupt:
         pass
 
