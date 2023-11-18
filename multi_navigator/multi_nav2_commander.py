@@ -66,7 +66,7 @@ class MultiNavigator(Node):
         3. N namespaced subscribers to {robot_namespace}/map_pose OR tf buffer? 
         """
 
-        self.isDecentralized = True
+        self.isDecentralized = False
 
         self.goal_handle = {}
         self.result_future = {}
@@ -132,7 +132,7 @@ class MultiNavigator(Node):
         #     columns=["robot_id", "start_time", "end_time", "time_taken()"]
         # )
 
-        base_file_path = "/home/vineet/mfi_multiagent_sim/experiment-data/"
+        base_file_path = "/home/admin/mfi_multiagent_sim/experiment-data/"
 
         if not self.isDecentralized:
             self.csv_file_name = base_file_path + "cbs-exp"
@@ -288,9 +288,9 @@ class MultiNavigator(Node):
 
             pose_list.append((6.0, -2.0))
 
-            # pose_list.append((7.0, -1.0))
+            pose_list.append((7.0, -1.0))
 
-            # pose_list.append((8.0, -2.0))
+            pose_list.append((8.0, -2.0))
 
             # pose_list.append((5.5, 1.0))
 
